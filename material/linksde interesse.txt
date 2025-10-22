@@ -1,0 +1,6 @@
+PPT das aulas
+- transformação de images espectral: https://docs.google.com/presentation/d/1YxiXudRKZ0VUsCY0OhA1Vz29iOwk5BcV/edit?usp=sharing&ouid=101051316898513080391&rtpof=true&sd=true
+
+- transformação de images espacial:  https://docs.google.com/presentation/d/18m-OluVkOV1JiZm-id3ZnLiJqqywYSDo/edit?usp=sharing&ouid=101051316898513080391&rtpof=true&sd=true
+
+- classificação não supervisionada (cluster): https://docs.google.com/presentation/d/10W3gCQWvRyp6_eRV8m-PLTsJZKIzWAXL/edit?usp=sharing&ouid=101051316898513080391&rtpof=true&sd=true
