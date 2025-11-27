@@ -10,18 +10,46 @@ Variável municipiosSelecionados é gerenciada pelo gee para que as três imagen
 uma feature collection
 */
 
+var paletaClasses = [
+  "blue", // 0 água
+  "red", // 1 urbano
+  "yellow", // 2 solo exposto
+  "006400", // 3 vegetação (Verde escuro)
+  "90EE90", // 4 pastagem (Verde claro)
+  "orange", // 5 agricultura
+];
+
+var vis = {
+  mun: {
+    color: "red",
+    fillColor: "000000",
+    width: 2,
+  },
+  mosaico: {
+    min: 0,
+    max: 3000,
+    bands: ["B4", "B3", "B2"],
+  },
+  classificacao: {
+    min: 0,
+    max: 5,
+    palette: paletaClasses,
+  },
+};
+
+var lista_mun = ["Barreiras", "Remanso", "Jacobina"];
+
 var municipiosSelecionados = table
   .filter(ee.Filter.eq("ADM1_NAME", "Bahia"))
-  .filter(ee.Filter.inList("ADM2_NAME", ["Barreiras", "Remanso", "Jacobina"]));
+  .filter(ee.Filter.inList("ADM2_NAME", lista_mun));
 
-var contornos = municipiosSelecionados.style({
-  color: "red",
-  fillColor: "000000",
-  width: 2,
+// Adiciona o contorno de cada município separadamente
+lista_mun.forEach(function (nomeMunicipio) {
+  var munIndividual = municipiosSelecionados.filter(
+    ee.Filter.eq("ADM2_NAME", nomeMunicipio)
+  );
+  Map.addLayer(munIndividual.style(vis.mun), {}, "Município: " + nomeMunicipio);
 });
-
-Map.centerObject(municipiosSelecionados, 7);
-Map.addLayer(contornos, {}, "Municípios da Bahia");
 
 print(municipiosSelecionados);
 
@@ -39,23 +67,18 @@ clip > corta a imagem exatamente no formato do nosso município
 */
 
 var geometry = municipiosSelecionados.geometry();
+Map.centerObject(geometry, 6);
 
-var imagemClassificacao = s2
+var mosaico = s2
   .filterBounds(geometry)
   .filterDate("2023-01-01", "2024-01-01")
   .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-  .median()
-  .clip(geometry);
+  .median();
+//.clip(geometry);
 
-print(imagemClassificacao);
+print("Mosaico: ", mosaico);
 
-var visParams = {
-  min: 0,
-  max: 3000,
-  bands: ["B4", "B3", "B2"],
-};
-
-Map.addLayer(imagemClassificacao, visParams, "Mosaico Sentinel-2 (2023)");
+Map.addLayer(mosaico.clip(geometry), vis.mosaico, "Mosaico Sentinel-2 (2023)");
 
 /*
 Etapa 03: Coleta de amostras e unificação das classes
@@ -83,7 +106,7 @@ var amostrasTreinamento = agua
   .merge(pastagem)
   .merge(agricultura);
 
-var dadosTreinamento = imagemClassificacao.sampleRegions({
+var dadosTreinamento = mosaico.sampleRegions({
   collection: amostrasTreinamento,
   properties: ["classe"],
   scale: 30,
@@ -96,6 +119,8 @@ print(dadosTreinamento.size());
 dadosTreinamento = dadosTreinamento
   .randomColumn()
   .filter(ee.Filter.lt("random", 0.2));
+
+//dadosTreinamento = dadosTreinamento.randomColumn().sort('random').limit(5000);
 
 //print('Amostra dos dados:', dadosTreinamento.limit(5));
 print("Total de pixels coletados:", dadosTreinamento.size());
@@ -113,11 +138,6 @@ Modelo analisa relação entre bandas e classes
 Imagem é classificada com paleta de cores
 */
 
-var classificador = ee.Classifier.smileRandomForest({
-  numberOfTrees: 100,
-  minLeafPopulation: 1,
-});
-
 var bandasDeTreinamento = [
   "B2",
   "B3",
@@ -126,32 +146,27 @@ var bandasDeTreinamento = [
   "B6",
   "B7",
   "B8",
-  "B8A",
   "B11",
   "B12",
 ];
 
+var classificador = ee.Classifier.smileRandomForest({
+  numberOfTrees: 100,
+  minLeafPopulation: 1,
+});
+
 var classificadorTreinado = classificador.train({
   features: dadosTreinamento,
   classProperty: "classe",
-  //inputProperties: imagemClassificacao.bandNames()
+  //inputProperties: mosaico.bandNames()
   inputProperties: bandasDeTreinamento,
 });
 
-var imagemClassificada = imagemClassificacao.classify(classificadorTreinado);
-
-var paletaClasses = [
-  "blue", // 0 água
-  "red", // 1 urbano
-  "yellow", // 2 solo exposto
-  "006400", // 3 vegetação (Verde escuro)
-  "90EE90", // 4 pastagem (Verde claro)
-  "orange", // 5 agricultura
-];
+var imagemClassificada = mosaico.classify(classificadorTreinado);
 
 Map.addLayer(
-  imagemClassificada,
-  { min: 0, max: 5, palette: paletaClasses },
+  imagemClassificada.clip(geometry),
+  vis.classificacao,
   "Classificação (Random Forest)"
 );
 
