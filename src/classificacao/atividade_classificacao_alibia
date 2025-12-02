@@ -1,0 +1,155 @@
+/*
+.:: Autora: Alíbia 
+.:: link do script GEE: https://code.earthengine.google.com/0693a5404dfbfe430e94b866297520f5
+----Tarefa asset da Bahia, escolher 3 municípios e classificar em :
+----Água, Urbano, Solo, Vegetação, Pastagem, Agricultura
+
+*/
+
+// ------- IMPORTAR ASSET -------
+var bahia = ee.FeatureCollection("projects/doutoradouefs/assets/BA_Municipios_2024");
+Map.centerObject(bahia, 6);
+Map.addLayer(bahia, {}, "Bahia");
+
+// ------- PARÂMETROS DE VISUALIZAÇÃO -------
+
+var paletaClasses = [
+  "0000FF", // 0 água
+  "FF0000", // 1 urbano
+  "00FF00", // 2 vegetação 
+  "C2B280", // 3 pastagem 
+  "BE8B5C", // 4 solo exposto
+  "FFFF00", // 5 agricultura
+];
+
+var vis = {
+  mun: {
+    color: "red",
+    fillColor: "000000",
+    width: 2,
+  },
+  mosaico: {
+    min: 0.039250001311302185,
+    max: 0.25095000863075256,
+    bands: ["B4", "B3", "B2"],
+  },
+  classificacao: {
+    min: 0,
+    max: 5,
+    palette: paletaClasses,
+  },
+};
+
+// ------- DEFINIR MUNICÍPIOS -------
+var lista_mun = ['Canudos', 'Euclides da Cunha', 'Tucano']
+var municipios = bahia.filter(
+  ee.Filter.inList('NM_MUN', lista_mun)
+);
+// Adiciona o contorno de cada município separadamente
+lista_mun.forEach(function (nomeMunicipio) {
+  var munIndividual = municipios.filter(
+    ee.Filter.eq("NM_MUN", nomeMunicipio)
+  );
+  
+  Map.addLayer(munIndividual.style(vis.mun), {}, "Município: " + nomeMunicipio);
+});
+
+// ------- PARÂMETROS DA IMAGEM -------
+//filtros e definições
+var col = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+var ini = '2023-01-01';
+var fim = '2023-12-31';
+var roi = municipios.geometry();
+var cc = 10;
+
+//cloud mask e cloud cover
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  return image.updateMask(mask).divide(10000);
+}
+
+//composição
+var mosaico = col
+  .filterBounds(roi)
+  .filterDate(ini, fim)
+  .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cc))
+  .map(maskS2clouds)
+  .median()
+  .select('B2','B3','B4','B5','B6','B8','B8A','B12');
+
+print("Mosaico: ", mosaico);
+Map.addLayer(mosaico.clip(roi), vis.mosaico, "Sentinel-2");
+
+// ------- PROCESSO DE CLASSIFICAÇÃO -------
+
+//.:: Coleta de amostras ::.
+// Juntar tudo em um único FC
+var amostrasTreinamento = agua
+  .merge(urbano)
+  .merge(vegetacao)
+  .merge(pastagem)
+  .merge(solo)
+  .merge(agricultura);
+print(amostrasTreinamento)
+
+// dados de treinamento
+var samples = mosaico.sampleRegions({
+  collection: amostrasTreinamento,
+  properties: ["classe"],
+  scale: 10,
+  //geometries: false,
+  tileScale: 4
+  
+});
+print('Amostra total', samples.size());
+
+// Dividir amostras: treino 70%, validação 30%
+var randsample = samples.randomColumn('random', 123);
+var treinosample = randsample.filter(ee.Filter.lt('random', 0.7));
+print("Amostras de treinamento:", treinosample.size());
+
+var validasample = randsample.filter(ee.Filter.gte('random', 0.7));
+print("Amostras de validação:", validasample.size());
+
+// amostras por classe
+var contagemPorClasse = treinosample.aggregate_histogram("classe");
+print("Quantidade de amostras por classe:", contagemPorClasse);
+
+//camadas de info pra classificação
+var bandasTreinamento = [
+  'B2', 'B3', 'B4', 'B8'
+];
+
+//definir hiperparâmetros RF
+var hyperparametersRF = ee.Classifier.smileRandomForest({
+  numberOfTrees: 200
+});
+
+// Treinar classificador RF 
+var classifier = hyperparametersRF.train({
+  features: treinosample,
+  classProperty: 'classe',
+  inputProperties: bandasTreinamento
+});
+
+var dadoClassificado = mosaico.classify(classifier);
+
+Map.addLayer(dadoClassificado.clip(roi), vis.classificacao, "Imagem classificada");
+
+// // Export.image.toDrive({
+// //   image: dadoClassificado,
+// //   description: 'Classificacao_Bahia_3municipios',
+// //   folder: 'GEE',
+// //   scale: 10,
+// //   region: roi,
+// //   maxPixels: 1e13
+// // });
