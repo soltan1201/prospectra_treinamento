@@ -37,7 +37,6 @@ Variável municipiosSelecionados é gerenciada pelo gee para que as três imagen
 uma feature collection
 */
 
-var table = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2");
 var lista_mun = ["Barreiras", "Remanso", "Jacobina"];
 
 var municipiosSelecionados = table
@@ -78,9 +77,6 @@ function mascararNuvens(img) {
 
 var geometry = municipiosSelecionados.geometry();
 Map.centerObject(geometry, 6);
-
-var s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED");
-var s2Clouds = ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY");
 
 var s2 = ee
   .ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
@@ -203,8 +199,25 @@ Map.addLayer(
   "Classificação (Random Forest)"
 );
 
-// 5. ANALISAR A IMPORTÂNCIA DAS VARIÁVEIS (CURIOSIDADE TÉCNICA)
+// ANALISAR A IMPORTÂNCIA DAS VARIÁVEIS (CURIOSIDADE TÉCNICA)
 // O Random Forest pode nos dizer quais bandas foram mais úteis para diferenciar as classes.
 // Isso aparece no Console como um dicionário/gráfico.
 var importancia = classificadorTreinado.explain();
 print("Importância das Bandas:", importancia);
+
+/*
+Etapa 05: Validação
+
+Utilizando índices espectrais para criar um relacionamento com a classificação realizada
+*/
+
+function calIndices(img) {
+  var ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI");
+  var ndwi = img.normalizedDifference(["B3", "B8"]).rename("NDWI");
+  var ndbi = img.normalizedDifference(["B11", "B8"]).rename("NDBI");
+
+  return img.addBands([ndvi, ndwi, ndbi]);
+}
+
+var mosaicoIndices = calIndices(mosaico);
+print("Mosaico com índices: ", mosaicoIndices);
