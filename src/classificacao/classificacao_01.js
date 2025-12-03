@@ -1,15 +1,6 @@
 //Autor(es): @felipe-py
 //Link gee: https://code.earthengine.google.com/fc14c5c468fcc99333a7fbd5f3d9da47
 
-/*
-Etapa 01: Seleção dos municípios e definição dos contornos
-
-Seleciona apenas o estado e depois realiza um novo filtro para cidades dentro desse estado
-Contorno é definido com style, para não ficar uma cor sólida
-Variável municipiosSelecionados é gerenciada pelo gee para que as três imagens desconexas se tornem
-uma feature collection
-*/
-
 var paletaClasses = [
   "blue", // 0 água
   "red", // 1 urbano
@@ -37,6 +28,16 @@ var vis = {
   },
 };
 
+/*
+Etapa 01: Seleção dos municípios e definição dos contornos
+
+Seleciona apenas o estado e depois realiza um novo filtro para cidades dentro desse estado
+Contorno é definido com style, para não ficar uma cor sólida
+Variável municipiosSelecionados é gerenciada pelo gee para que as três imagens desconexas se tornem
+uma feature collection
+*/
+
+var table = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2");
 var lista_mun = ["Barreiras", "Remanso", "Jacobina"];
 
 var municipiosSelecionados = table
@@ -66,15 +67,47 @@ Median > Pega a pilha de imagens que restaram e calcula a mediana de cada pixel,
 clip > corta a imagem exatamente no formato do nosso município
 */
 
+var MAX_PROB_NUVEM = 30;
+
+function mascararNuvens(img) {
+  img = ee.Image(img);
+  var nuvens = ee.Image(img.get("cloud_mask")).select("probability");
+  var naoNuvem = nuvens.lt(MAX_PROB_NUVEM);
+  return img.updateMask(naoNuvem);
+}
+
 var geometry = municipiosSelecionados.geometry();
 Map.centerObject(geometry, 6);
 
-var mosaico = s2
+var s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED");
+var s2Clouds = ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY");
+
+var s2 = ee
+  .ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
   .filterBounds(geometry)
   .filterDate("2023-01-01", "2024-01-01")
-  .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-  .median();
+  .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30));
+
+var s2Clouds = ee
+  .ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
+  .filterBounds(geometry)
+  .filterDate("2023-01-01", "2024-01-01");
+
+var s2MascaraNuvem = ee.Join.saveFirst("cloud_mask").apply({
+  primary: s2,
+  secondary: s2Clouds,
+  condition: ee.Filter.equals({
+    leftField: "system:index",
+    rightField: "system:index",
+  }),
+});
+
+var filtroS2 = s2MascaraNuvem
+  .filter(ee.Filter.notNull(["cloud_mask"]))
+  .map(mascararNuvens);
 //.clip(geometry);
+
+var mosaico = ee.ImageCollection(filtroS2).median();
 
 print("Mosaico: ", mosaico);
 
@@ -114,7 +147,7 @@ var dadosTreinamento = mosaico.sampleRegions({
   tileScale: 16, // CRUCIAL: Divide o processamento em 16x para não estourar memória
 });
 
-print(dadosTreinamento.size());
+print("Dados de treinamento (size): ", dadosTreinamento.size());
 
 dadosTreinamento = dadosTreinamento
   .randomColumn()
